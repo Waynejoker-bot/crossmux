@@ -27,3 +27,51 @@ target_link_libraries(AirPageImageStoreTest PRIVATE
 )
 
 gtest_discover_tests(AirPageImageStoreTest PROPERTIES RUN_SERIAL TRUE)
+
+add_executable(AirPageIGrowthProtocolTest
+  AirPageIGrowthProtocolTest.cpp
+  ${REPO_ROOT}/src/activities/apps/airpage/AirPageIGrowthProtocol.cpp
+)
+
+target_include_directories(AirPageIGrowthProtocolTest BEFORE PRIVATE
+  ${REPO_ROOT}/src/activities/apps/airpage
+)
+
+target_link_libraries(AirPageIGrowthProtocolTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+
+gtest_discover_tests(AirPageIGrowthProtocolTest)
+
+add_executable(AirPageIGrowthCryptoTest
+  AirPageIGrowthCryptoTest.cpp
+  ${REPO_ROOT}/src/activities/apps/airpage/AirPageIGrowthCrypto.cpp
+)
+
+target_include_directories(AirPageIGrowthCryptoTest BEFORE PRIVATE
+  ${crosspoint_simulator_SOURCE_DIR}/src
+  ${REPO_ROOT}/src/activities/apps/airpage
+)
+
+target_link_libraries(AirPageIGrowthCryptoTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+
+gtest_discover_tests(AirPageIGrowthCryptoTest)
+
+add_executable(AirPageStartupPolicyTest
+  AirPageStartupPolicyTest.cpp
+)
+
+target_include_directories(AirPageStartupPolicyTest BEFORE PRIVATE
+  ${REPO_ROOT}/src/activities/apps/airpage
+)
+
+target_link_libraries(AirPageStartupPolicyTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+
+gtest_discover_tests(AirPageStartupPolicyTest)

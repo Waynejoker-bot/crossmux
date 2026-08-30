@@ -6,6 +6,7 @@
 
 #include "../../Activity.h"
 #include "AirPageConnection.h"
+#include "AirPageIGrowthBridge.h"
 #include "AirPageImageStore.h"
 #include "components/OptionPopup.h"
 #include "components/UiAppHost.h"
@@ -25,7 +26,7 @@ class AirPageActivity final : public Activity, private UiAppHost {
   bool preventAutoSleep() override;
 
  private:
-  enum class Screen : uint8_t { Qr, Settings, History, Image };
+  enum class Screen : uint8_t { Qr, Settings, History, Image, Pairing };
   enum class Phase : uint8_t { Idle, FetchRequested, Fetching, WallpaperWriting, WallpaperNotice };
   enum class Notice : uint8_t {
     None,
@@ -38,10 +39,12 @@ class AirPageActivity final : public Activity, private UiAppHost {
     RealtimePaused,
     SettingsSaveFailed,
     WallpaperFailed,
+    PairingFailed,
   };
-  enum class SettingRow : uint8_t { Mode, AutoWallpaper, Count };
+  enum class SettingRow : uint8_t { Mode, AutoWallpaper, IGrowthButtons, Count };
   enum class WallpaperResult : uint8_t { None, Saved, Failed };
   enum class ImageDisplayResult : uint8_t { None, Success, Failure };
+  enum class ActionFeedback : uint8_t { None, Accepted, QueuedOffline, Failed };
   enum class TouchAction : int16_t {
     BackToApps,
     ShowQr,
@@ -50,6 +53,8 @@ class AirPageActivity final : public Activity, private UiAppHost {
     Refresh,
     SetWallpaper,
     OpenImageMenu,
+    PairingBack,
+    PairingRetry,
   };
 
   bool processImageDisplayResult();
@@ -58,6 +63,10 @@ class AirPageActivity final : public Activity, private UiAppHost {
 
   void openSettings();
   void applySettingsSelection();
+  void startIGrowthPairing();
+  void pollIGrowthPairing();
+  void loadIGrowthManifest();
+  void handleIGrowthAction(airpage::igrowth::Button button);
   void openHistory();
   void openSelectedHistoryImage();
   void openWallpaperConfirmation();
@@ -85,6 +94,8 @@ class AirPageActivity final : public Activity, private UiAppHost {
   void buildTouchScreen(UiScreen& screen);
 
   void renderQr(const Rect& viewport);
+  void renderPairing(const Rect& viewport);
+  void renderImageControls();
   void renderStatus(const Rect& viewport, const char* msg);
   Rect contentViewport() const;
   const char* noticeText() const;
@@ -98,10 +109,12 @@ class AirPageActivity final : public Activity, private UiAppHost {
   Phase phase_ = Phase::Idle;
   Notice notice_ = Notice::None;
   WallpaperResult wallpaperResult_ = WallpaperResult::None;
+  ActionFeedback actionFeedback_ = ActionFeedback::None;
   std::atomic<ImageDisplayResult> imageDisplayResult_{ImageDisplayResult::None};
 
   airpage::AirPageImageStore imageStore_;
   airpage::AirPageConnection connection_;
+  airpage::AirPageIGrowthBridge igrowthBridge_;
   airpage::SelectedImage selectedImage_;
   OptionPopup imageMenu_;
   ButtonNavigator buttonNavigator_;
@@ -115,11 +128,14 @@ class AirPageActivity final : public Activity, private UiAppHost {
 
   bool imageNeedsDisplay_ = true;
   bool waitForInputRelease_ = false;
+  bool imageBackLongHandled_ = false;
   bool autoSleepWallpaper_ = false;
   int displayedScreenWidth_ = 0;
   int displayedScreenHeight_ = 0;
   int settingsSelection_ = 0;
   int historySelection_ = 0;
+  uint32_t nextPairingPollMs_ = 0;
+  uint32_t nextOutboxAttemptMs_ = 0;
 
   // These short strings are required by the HTTP and QR APIs. They are built
   // once per activity lifetime and reused.
