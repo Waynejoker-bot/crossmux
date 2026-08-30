@@ -1,5 +1,7 @@
 #include "AirPageActivity.h"
 
+#include "AirPageStartupPolicy.h"
+
 #include <Arduino.h>
 #include <GfxRenderer.h>
 #include <HalGPIO.h>
@@ -30,6 +32,9 @@ namespace {
 namespace fui = freeink::ui;
 
 constexpr uint32_t kWallpaperNoticeDurationMs = 1000u;
+constexpr uint32_t kPairingPollIntervalMs = 5000u;
+constexpr uint32_t kOutboxRetryIntervalMs = 15000u;
+constexpr unsigned long kImageBackExitHoldMs = 1000u;
 
 uint64_t currentArchiveDateKey() {
   const uint32_t timestamp = TimeUtils::getCurrentValidTimestamp();
@@ -77,10 +82,12 @@ void AirPageActivity::onEnter() {
   screen_ = Screen::Qr;
   notice_ = Notice::None;
   wallpaperResult_ = WallpaperResult::None;
+  actionFeedback_ = ActionFeedback::None;
   imageDisplayResult_.store(ImageDisplayResult::None, std::memory_order_relaxed);
   selectedImage_ = {};
   imageNeedsDisplay_ = true;
   waitForInputRelease_ = false;
+  imageBackLongHandled_ = false;
   displayedScreenWidth_ = 0;
   displayedScreenHeight_ = 0;
   settingsSelection_ = 0;
@@ -91,6 +98,8 @@ void AirPageActivity::onEnter() {
   settingsRows_[0].actionValue = 0;
   settingsRows_[1].label = tr(STR_AIRPAGE_AUTO_WALLPAPER);
   settingsRows_[1].actionValue = 1;
+  settingsRows_[2].label = tr(STR_AIRPAGE_IGROWTH_BUTTONS);
+  settingsRows_[2].actionValue = 2;
   airpage::AirPageImageRenderer::resetSessionFailures();
 
   switch (imageStore_.initialize(currentArchiveDateKey())) {
@@ -109,6 +118,7 @@ void AirPageActivity::onEnter() {
   airpage::AirPageWallpaper::recoverInterruptedTransaction();
 
   const std::string& deviceId = airpage::deviceId();
+  igrowthBridge_.begin(deviceId.c_str());
   uploadUrl_.reserve(64 + deviceId.size());
   uploadUrl_ = "https://";
   uploadUrl_ += CrossMuxEndpoints::AIRPAGE_SUBDOMAIN;
@@ -138,6 +148,12 @@ void AirPageActivity::onEnter() {
 
   const auto connectionEvent = connection_.begin(airpage::loadRealtimeMode());
   applyConnectionEvent(connectionEvent);
+  if (airpage::startup::chooseAirPageEntryScreen(imageStore_.hasImage()) ==
+          airpage::startup::AirPageEntryScreen::CurrentImage &&
+      imageStore_.selectCurrent(selectedImage_)) {
+    screen_ = Screen::Image;
+    loadIGrowthManifest();
+  }
   LOG_DBG("AIRP", "onEnter activity=%u free=%u largest=%u id=%s cached=%d realtime=%d",
           static_cast<unsigned>(sizeof(*this)), static_cast<unsigned>(ESP.getFreeHeap()),
           static_cast<unsigned>(ESP.getMaxAllocHeap()), deviceId.c_str(), imageStore_.hasImage() ? 1 : 0,
@@ -160,7 +176,9 @@ void AirPageActivity::onExit() {
 #endif
 }
 
-bool AirPageActivity::preventAutoSleep() { return phase_ != Phase::Idle || connection_.preventsAutoSleep(); }
+bool AirPageActivity::preventAutoSleep() {
+  return phase_ != Phase::Idle || igrowthBridge_.pairingPending() || connection_.preventsAutoSleep();
+}
 
 bool AirPageActivity::processImageDisplayResult() {
   const ImageDisplayResult result = imageDisplayResult_.exchange(ImageDisplayResult::None, std::memory_order_acquire);
@@ -250,6 +268,7 @@ void AirPageActivity::clearConnectionNotice() {
     case Notice::DownloadFailed:
     case Notice::SettingsSaveFailed:
     case Notice::WallpaperFailed:
+    case Notice::PairingFailed:
       break;
   }
 }
@@ -379,14 +398,61 @@ void AirPageActivity::loop() {
     }
 
     case Screen::Image:
-      if (mappedInput.wasAnyReleased()) wallpaperResult_ = WallpaperResult::None;
-      if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+      if (mappedInput.wasAnyReleased()) {
+        wallpaperResult_ = WallpaperResult::None;
+        actionFeedback_ = ActionFeedback::None;
+      }
+      if (igrowthBridge_.hasManifest() && mappedInput.wasPressed(MappedInputManager::Button::Back)) {
+        imageBackLongHandled_ = false;
+      }
+      if (igrowthBridge_.hasManifest() && mappedInput.isPressed(MappedInputManager::Button::Back) &&
+          !imageBackLongHandled_ && mappedInput.getHeldTime() >= kImageBackExitHoldMs) {
+        imageBackLongHandled_ = true;
+        waitForInputRelease_ = true;
         setAirPageScreen(Screen::Qr);
         requestUpdate();
         return;
       }
+      if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        if (igrowthBridge_.hasManifest() && !imageBackLongHandled_) {
+          handleIGrowthAction(airpage::igrowth::Button::Back);
+        } else {
+          setAirPageScreen(Screen::Qr);
+          requestUpdate();
+        }
+        imageBackLongHandled_ = false;
+        return;
+      }
       if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
-        openWallpaperConfirmation();
+        if (igrowthBridge_.hasManifest()) {
+          handleIGrowthAction(airpage::igrowth::Button::Confirm);
+        } else {
+          openWallpaperConfirmation();
+        }
+        return;
+      }
+      if (igrowthBridge_.hasManifest() && mappedInput.wasReleased(MappedInputManager::Button::Left)) {
+        handleIGrowthAction(airpage::igrowth::Button::Left);
+        return;
+      }
+      if (igrowthBridge_.hasManifest() && mappedInput.wasReleased(MappedInputManager::Button::Right)) {
+        handleIGrowthAction(airpage::igrowth::Button::Right);
+        return;
+      }
+      break;
+
+    case Screen::Pairing:
+      if (mappedInput.wasReleased(MappedInputManager::Button::Back)) {
+        setAirPageScreen(Screen::Settings);
+        requestUpdate();
+        return;
+      }
+      if (mappedInput.wasReleased(MappedInputManager::Button::Confirm)) {
+        pollIGrowthPairing();
+        return;
+      }
+      if (igrowthBridge_.pairingPending() && static_cast<int32_t>(millis() - nextPairingPollMs_) >= 0) {
+        pollIGrowthPairing();
         return;
       }
       break;
@@ -400,6 +466,11 @@ void AirPageActivity::loop() {
     return;
   }
   applyConnectionEvent(connection_.pump(phase_ == Phase::Idle && screen_ != Screen::Settings));
+  if (phase_ == Phase::Idle && connection_.wifiConnected() && igrowthBridge_.paired() &&
+      static_cast<int32_t>(millis() - nextOutboxAttemptMs_) >= 0) {
+    igrowthBridge_.drainOneQueuedEvent();
+    nextOutboxAttemptMs_ = millis() + kOutboxRetryIntervalMs;
+  }
 }
 
 void AirPageActivity::setAirPageScreen(const Screen screen) {
@@ -442,6 +513,15 @@ void AirPageActivity::buildTouchScreen(UiScreen& screen) {
       fui::tapZones(screen.frame(), screen.frame().screen(), props);
       return;
     }
+    case Screen::Pairing: {
+      if (!mappedInput.hasTouch()) return;
+      const fui::FooterAction actions[] = {
+          {tr(STR_BACK), ACTION_TOUCH, static_cast<int16_t>(TouchAction::PairingBack)},
+          {tr(STR_RETRY), ACTION_TOUCH, static_cast<int16_t>(TouchAction::PairingRetry)},
+      };
+      screen.footer(actions, 2);
+      return;
+    }
     case Screen::Settings: {
       const Rect content = contentViewport();
       screen.setContentMargin(fui::Insets{static_cast<int16_t>(content.y),
@@ -450,6 +530,7 @@ void AirPageActivity::buildTouchScreen(UiScreen& screen) {
                                           static_cast<int16_t>(content.x)});
       settingsRows_[0].value = connection_.realtime() ? tr(STR_AIRPAGE_MODE_REALTIME) : tr(STR_AIRPAGE_MODE_MANUAL);
       settingsRows_[1].value = autoSleepWallpaper_ ? tr(STR_AIRPAGE_SETTING_ON) : tr(STR_AIRPAGE_SETTING_OFF);
+      settingsRows_[2].value = igrowthBridge_.paired() ? tr(STR_AIRPAGE_IGROWTH_PAIRED) : tr(STR_AIRPAGE_IGROWTH_SETUP);
       fui::ListProps props;
       props.items = settingsRows_;
       props.count = kSettingsRows;
@@ -544,6 +625,13 @@ void AirPageActivity::applyTouchAction(const TouchAction action) {
     case TouchAction::OpenImageMenu:
       openImageMenu();
       return;
+    case TouchAction::PairingBack:
+      setAirPageScreen(Screen::Settings);
+      requestUpdate();
+      return;
+    case TouchAction::PairingRetry:
+      pollIGrowthPairing();
+      return;
   }
 }
 
@@ -610,9 +698,87 @@ void AirPageActivity::applySettingsSelection() {
       requestUpdate();
       break;
     }
+    case SettingRow::IGrowthButtons:
+      startIGrowthPairing();
+      break;
     case SettingRow::Count:
       return;
   }
+}
+
+void AirPageActivity::startIGrowthPairing() {
+  if (phase_ != Phase::Idle) return;
+  if (!connection_.wifiConnected()) {
+    notice_ = Notice::WifiRequired;
+    openWifiSelection(false);
+    return;
+  }
+  setAirPageScreen(Screen::Pairing);
+  notice_ = Notice::None;
+  const auto result = igrowthBridge_.startPairing();
+  if (result == airpage::AirPageIGrowthBridge::PairingResult::Started) {
+    nextPairingPollMs_ = millis() + kPairingPollIntervalMs;
+  } else {
+    notice_ = Notice::PairingFailed;
+  }
+  requestUpdate();
+}
+
+void AirPageActivity::pollIGrowthPairing() {
+  if (phase_ != Phase::Idle || screen_ != Screen::Pairing) return;
+  if (!igrowthBridge_.pairingPending()) {
+    startIGrowthPairing();
+    return;
+  }
+  const auto result = igrowthBridge_.claimPairing();
+  bool displayChanged = true;
+  switch (result) {
+    case airpage::AirPageIGrowthBridge::PairingResult::Paired:
+      notice_ = Notice::None;
+      setAirPageScreen(Screen::Settings);
+      break;
+    case airpage::AirPageIGrowthBridge::PairingResult::Pending:
+      displayChanged = notice_ != Notice::None;
+      notice_ = Notice::None;
+      nextPairingPollMs_ = millis() + kPairingPollIntervalMs;
+      break;
+    case airpage::AirPageIGrowthBridge::PairingResult::NetworkFailed:
+      displayChanged = notice_ != Notice::PairingFailed;
+      notice_ = Notice::PairingFailed;
+      nextPairingPollMs_ = millis() + kPairingPollIntervalMs;
+      break;
+    case airpage::AirPageIGrowthBridge::PairingResult::Started:
+    case airpage::AirPageIGrowthBridge::PairingResult::Invalid:
+      notice_ = Notice::PairingFailed;
+      break;
+  }
+  if (displayChanged) requestUpdate();
+}
+
+void AirPageActivity::loadIGrowthManifest() {
+  actionFeedback_ = ActionFeedback::None;
+  igrowthBridge_.clearManifest();
+  if (selectedImage_.path[0] == '\0' || !igrowthBridge_.paired()) return;
+  const auto result = igrowthBridge_.loadManifest(selectedImage_.path, connection_.wifiConnected());
+  if (result == airpage::AirPageIGrowthBridge::ManifestResult::Unavailable) {
+    LOG_ERR("AIRIG", "iGrowth action manifest unavailable");
+  }
+}
+
+void AirPageActivity::handleIGrowthAction(const airpage::igrowth::Button button) {
+  actionFeedback_ = ActionFeedback::None;
+  switch (igrowthBridge_.sendAction(button, connection_.wifiConnected())) {
+    case airpage::AirPageIGrowthBridge::ActionResult::Accepted:
+      actionFeedback_ = ActionFeedback::Accepted;
+      break;
+    case airpage::AirPageIGrowthBridge::ActionResult::QueuedOffline:
+      actionFeedback_ = ActionFeedback::QueuedOffline;
+      break;
+    case airpage::AirPageIGrowthBridge::ActionResult::Unavailable:
+      actionFeedback_ = ActionFeedback::Failed;
+      break;
+  }
+  requestUpdate();
 }
 
 void AirPageActivity::openHistory() {
@@ -668,6 +834,7 @@ void AirPageActivity::openSelectedHistoryImage() {
     return;
   }
   wallpaperResult_ = WallpaperResult::None;
+  loadIGrowthManifest();
   setAirPageScreen(Screen::Image);
   imageNeedsDisplay_ = true;
   requestUpdate();
@@ -807,6 +974,7 @@ void AirPageActivity::doFetch() {
     case airpage::AirPageImageStore::StageResult::Unchanged:
       airpage::AirPageImageRenderer::resetSessionFailures();
       imageStore_.selectCurrent(selectedImage_);
+      loadIGrowthManifest();
       setAirPageScreen(Screen::Image);
       imageNeedsDisplay_ = true;
       notice_ = Notice::None;
@@ -816,6 +984,7 @@ void AirPageActivity::doFetch() {
     case airpage::AirPageImageStore::StageResult::PendingDisplay:
       airpage::AirPageImageRenderer::resetSessionFailures();
       imageStore_.selectCurrent(selectedImage_);
+      loadIGrowthManifest();
       imageNeedsDisplay_ = true;
       notice_ = Notice::None;
       setAirPageScreen(Screen::Image);
@@ -829,7 +998,7 @@ Rect AirPageActivity::contentViewport() const {
   const Rect safeArea = UITheme::getInstance().getScreenSafeArea(renderer, true, true);
   const int contentTop = safeArea.y + metrics.topPadding + metrics.headerHeight + metrics.verticalSpacing;
   int contentHeight = safeArea.height - metrics.topPadding - metrics.headerHeight - metrics.verticalSpacing * 2;
-  if (mappedInput.hasTouch() && screen_ == Screen::Qr) {
+  if (mappedInput.hasTouch() && (screen_ == Screen::Qr || screen_ == Screen::Pairing)) {
     contentHeight = std::max(0, contentHeight - app.theme().footerHeight - metrics.verticalSpacing);
   }
   return Rect{safeArea.x, contentTop, safeArea.width, contentHeight};
@@ -865,10 +1034,14 @@ void AirPageActivity::render(RenderLock&&) {
         imageNeedsDisplay_ = false;
         displayedScreenWidth_ = fullScreen.width;
         displayedScreenHeight_ = fullScreen.height;
+        renderImageControls();
         if (wallpaperResult_ != WallpaperResult::None) {
           const char* message = wallpaperResult_ == WallpaperResult::Saved ? tr(STR_AIRPAGE_WALLPAPER_SAVED)
                                                                            : tr(STR_AIRPAGE_WALLPAPER_FAILED);
           GUI.drawPopup(renderer, message);
+        }
+        if (igrowthBridge_.hasManifest() || actionFeedback_ != ActionFeedback::None ||
+            wallpaperResult_ != WallpaperResult::None) {
           renderer.displayBuffer(HalDisplay::FAST_REFRESH);
         }
         imageDisplayResult_.store(ImageDisplayResult::Success, std::memory_order_release);
@@ -883,6 +1056,10 @@ void AirPageActivity::render(RenderLock&&) {
       const char* message = wallpaperResult_ == WallpaperResult::Saved ? tr(STR_AIRPAGE_WALLPAPER_SAVED)
                                                                        : tr(STR_AIRPAGE_WALLPAPER_FAILED);
       GUI.drawPopup(renderer, message);
+    }
+    renderImageControls();
+    if (igrowthBridge_.hasManifest() || actionFeedback_ != ActionFeedback::None ||
+        wallpaperResult_ != WallpaperResult::None) {
       renderer.displayBuffer(HalDisplay::FAST_REFRESH);
     }
     if (mappedInput.hasTouch()) renderUi();
@@ -911,6 +1088,9 @@ void AirPageActivity::render(RenderLock&&) {
       case Screen::Image:
         renderStatus(content, tr(STR_AIRPAGE_INVALID_IMAGE));
         break;
+      case Screen::Pairing:
+        renderPairing(content);
+        break;
     }
   }
 
@@ -937,6 +1117,12 @@ void AirPageActivity::render(RenderLock&&) {
     }
     case Screen::Image:
       break;
+    case Screen::Pairing: {
+      const auto labels = mappedInput.mapLabels(tr(STR_BACK), tr(STR_RETRY), "", "");
+      GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+      if (notice_ == Notice::PairingFailed) GUI.drawPopup(renderer, noticeText());
+      break;
+    }
   }
 
   if (mappedInput.hasTouch() || screen_ == Screen::Settings || screen_ == Screen::History) renderUi();
@@ -969,6 +1155,8 @@ const char* AirPageActivity::noticeText() const {
       return tr(STR_AIRPAGE_SETTINGS_SAVE_FAILED);
     case Notice::WallpaperFailed:
       return tr(STR_AIRPAGE_WALLPAPER_FAILED);
+    case Notice::PairingFailed:
+      return tr(STR_AIRPAGE_IGROWTH_PAIRING_FAILED);
   }
   return "";
 }
@@ -1028,6 +1216,45 @@ void AirPageActivity::renderQr(const Rect& viewport) {
   }
 }
 
+void AirPageActivity::renderPairing(const Rect& viewport) {
+  if (!igrowthBridge_.pairingPending()) {
+    renderStatus(viewport, tr(STR_AIRPAGE_IGROWTH_PAIRING_FAILED));
+    return;
+  }
+  const auto& metrics = UITheme::getInstance().getMetrics();
+  const int titleHeight = renderer.getLineHeight(UI_12_FONT_ID);
+  const int codeHeight = renderer.getLineHeight(NOTOSANS_18_FONT_ID);
+  const int helpHeight = renderer.getLineHeight(UI_10_FONT_ID) * 3;
+  const int totalHeight = titleHeight + codeHeight + helpHeight + metrics.verticalSpacing * 2;
+  int y = viewport.y + std::max(0, (viewport.height - totalHeight) / 2);
+  UITheme::drawCenteredText(renderer, viewport, UI_12_FONT_ID, y, tr(STR_AIRPAGE_IGROWTH_PAIRING_CODE));
+  y += titleHeight + metrics.verticalSpacing;
+  UITheme::drawCenteredText(renderer, viewport, NOTOSANS_18_FONT_ID, y, igrowthBridge_.pairingCode());
+  y += codeHeight + metrics.verticalSpacing;
+  UITheme::drawCenteredWrappedText(renderer, Rect{viewport.x, y, viewport.width, helpHeight}, UI_10_FONT_ID,
+                                   tr(STR_AIRPAGE_IGROWTH_PAIRING_HINT), 3);
+}
+
+void AirPageActivity::renderImageControls() {
+  if (!igrowthBridge_.hasManifest()) return;
+  const auto labels = mappedInput.mapLabels(tr(STR_AIRPAGE_ACTION_DISMISS), tr(STR_AIRPAGE_ACTION_CONTINUE),
+                                            tr(STR_AIRPAGE_ACTION_EXPLAIN), tr(STR_AIRPAGE_ACTION_NEXT));
+  GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
+  switch (actionFeedback_) {
+    case ActionFeedback::None:
+      return;
+    case ActionFeedback::Accepted:
+      GUI.drawPopup(renderer, tr(STR_AIRPAGE_ACTION_SENT));
+      return;
+    case ActionFeedback::QueuedOffline:
+      GUI.drawPopup(renderer, tr(STR_AIRPAGE_ACTION_QUEUED));
+      return;
+    case ActionFeedback::Failed:
+      GUI.drawPopup(renderer, tr(STR_AIRPAGE_ACTION_FAILED));
+      return;
+  }
+}
+
 void AirPageActivity::renderStatus(const Rect& viewport, const char* msg) {
   UITheme::drawCenteredWrappedText(renderer, viewport, UI_12_FONT_ID, msg, 2);
 }
@@ -1041,6 +1268,8 @@ const char* AirPageActivity::screenTitle() const {
       return tr(STR_AIRPAGE_SETTINGS_TITLE);
     case Screen::History:
       return tr(STR_AIRPAGE_HISTORY_TITLE);
+    case Screen::Pairing:
+      return tr(STR_AIRPAGE_IGROWTH_PAIRING_TITLE);
   }
   return tr(STR_AIRPAGE_TITLE);
 }

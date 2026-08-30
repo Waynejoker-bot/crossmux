@@ -36,6 +36,7 @@
 #include "SdCardFontSystem.h"
 #include "activities/Activity.h"
 #include "activities/ActivityManager.h"
+#include "activities/apps/airpage/AirPageStartupPolicy.h"
 #ifdef ENABLE_CHINESE_VERSION
 #include "activities/settings/FontDownloadActivity.h"
 #include "activities/settings/TextSettingsActivity.h"
@@ -523,7 +524,6 @@ void setup() {
   const BootResume resume = isSilentReboot                             ? BootResume::Silent
                             : isSleepWake && !APP_STATE.showBootScreen ? BootResume::SplashlessWake
                                                                        : BootResume::Splash;
-  bool allowFastInitialReaderRefresh = false;
   bool needsWakeRefresh = false;
 
   const bool fontsReady = setupDisplayAndFonts(resume != BootResume::Splash,
@@ -554,7 +554,6 @@ void setup() {
           renderer.drawImage(LoadingIcon, 0, pageHeight - LOADINGICON_HEIGHT, LOADINGICON_WIDTH, LOADINGICON_HEIGHT);
           if (useDifferentialRefresh) {
             renderer.displayGrayscaleBase(HalDisplay::FAST_REFRESH);
-            allowFastInitialReaderRefresh = true;
           } else {
             renderer.displayBuffer(HalDisplay::HALF_REFRESH);
           }
@@ -570,59 +569,49 @@ void setup() {
     }
   }
 
-  if (recoveryFirmwareMode) {
-    // Skip normal home/reader routing: jump straight into the SD firmware picker.
+  const auto startupResume = resume == BootResume::Silent              ? airpage::startup::ResumeKind::SilentRestart
+                             : resume == BootResume::SplashlessWake ? airpage::startup::ResumeKind::DeepSleepWake
+                                                                    : airpage::startup::ResumeKind::ColdBoot;
+  const airpage::startup::BootContext bootContext{
+      .recoveryMode = recoveryFirmwareMode,
+      .panicRestart = HalSystem::isRebootFromPanic(),
+      .onboardingRequired = requiresOnboarding,
+      .postOta = postOtaBoot,
+      .resume = startupResume,
+  };
+  const auto landing = airpage::startup::chooseBootLanding(bootContext);
+
+  if (landing == airpage::startup::BootLanding::FirmwareRecovery) {
+    // Recovery always wins over appliance-mode startup so a bad image can still be replaced from SD.
     activityManager.replaceActivityWith<SdFirmwareUpdateActivity>(/*recoveryMode=*/true);
-  } else if (HalSystem::isRebootFromPanic()) {
-    // If we rebooted from a panic, go to crash report screen to show the panic info
+  } else if (landing == airpage::startup::BootLanding::CrashReport) {
     activityManager.goToCrashReport();
-  } else if (postOtaBoot) {
-    if (requiresOnboarding) {
-      activityManager.replaceActivityWith<LanguageSelectActivity>(onboardingMode);
-    } else {
-      activityManager.goHome();
-    }
-  } else if (requiresOnboarding) {
+  } else if (landing == airpage::startup::BootLanding::Onboarding) {
     activityManager.replaceActivityWith<LanguageSelectActivity>(onboardingMode);
-  } else if (resume == BootResume::Silent && snapshotTarget == SilentRebootTarget::ReaderPreloadChineseFont) {
+  } else if (landing == airpage::startup::BootLanding::AirPage) {
+    // This iGrowth appliance build treats AirPage as its normal landing surface on cold boot,
+    // deep-sleep wake, and the first verified boot after an OTA update.
+    if (needsWakeRefresh) renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
+    activityManager.goToAirPage();
+  } else if (snapshotTarget == SilentRebootTarget::ReaderPreloadChineseFont) {
 #ifdef ENABLE_CHINESE_VERSION
     continueChineseFontInstall(snapshotFontPointSize);
 #else
     activityManager.goHome();
 #endif
-  } else if (resume == BootResume::Silent &&
-             (snapshotTarget == SilentRebootTarget::Reader ||
+  } else if ((snapshotTarget == SilentRebootTarget::Reader ||
               snapshotTarget == SilentRebootTarget::ReaderSuppressFontPrompt) &&
              !APP_STATE.openEpubPath.empty()) {
     activityManager.goToReader(APP_STATE.openEpubPath);
-  } else if (resume == BootResume::Silent) {
-    // target == home (or reader with no open book): land on home — don't fall
-    // through to the sleep-wake "resume reader" logic, which fires on stale
-    // openEpubPath + lastSleepFromReader from a prior session.
-    activityManager.goHome();
-  } else if (APP_STATE.openEpubPath.empty() || !APP_STATE.lastSleepFromReader ||
-             mappedInputManager.isPressed(MappedInputManager::Button::Back) || APP_STATE.readerActivityLoadCount > 0) {
-    // Boot to home screen if no book is open, last sleep was not from reader, back button is held, or reader activity
-    // crashed (indicated by readerActivityLoadCount > 0)
-    if (needsWakeRefresh) renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
-    activityManager.goHome();
   } else {
-    // Clear app state to avoid getting into a boot loop if the epub doesn't load
-    const auto path = APP_STATE.openEpubPath;
-    APP_STATE.openEpubPath = "";
-    APP_STATE.readerActivityLoadCount++;
-    APP_STATE.saveToFile();
-    // Splashless wake leaves the retained sleep frame on the panel; without a
-    // clean first paint the reader shows the previous screen's residue (A4
-    // grayscale panels ghost worst). Mirror the Home branch's HALF refresh so
-    // reader resume also clears the retained frame.
-    if (needsWakeRefresh) renderer.requestNextRefresh(HalDisplay::HALF_REFRESH);
-    activityManager.goToReader(path, allowFastInitialReaderRefresh);
+    // target == home (or reader with no open book): land on home — don't fall
+    // through to any stale reader state during an explicit maintenance restart.
+    activityManager.goHome();
   }
 
   if (resume == BootResume::Silent) {
     if (postOtaBoot) {
-      // Apply the queued Home replacement before waiting for its first physical paint.
+      // Apply the queued post-OTA landing replacement before waiting for its first physical paint.
       activityManager.loop();
     }
     // Block until the first paint physically completes. refreshDisplay()
