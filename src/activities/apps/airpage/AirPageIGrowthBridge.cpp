@@ -31,6 +31,7 @@ constexpr size_t kMaxEventBytes = 768;
 constexpr size_t kMaxOutboxEntries = 8;
 constexpr size_t kMaxIGrowthBmpBytes = 512 * 1024;
 constexpr uint64_t kMinimumValidEpochMs = 1704067200000ULL;
+constexpr char kManifestCacheVersion[] = "v2";
 
 // DigiCert Global Root G2. The current igrowth.cc chain terminates at this
 // stable root; pinning the root keeps certificate rotation possible while
@@ -319,7 +320,8 @@ AirPageIGrowthBridge::ManifestResult AirPageIGrowthBridge::loadManifest(const ch
     const auto& expected = igrowth::actionContract(static_cast<igrowth::Button>(index));
     const JsonObjectConst action = actions[index].as<JsonObjectConst>();
     if (strcmp(action["button"] | "", expected.button) != 0 ||
-        strcmp(action["action_id"] | "", expected.actionId) != 0) {
+        strcmp(action["action_id"] | "", expected.actionId) != 0 ||
+        !igrowth::copyActionLabel(action["label"] | "", actionLabels_[index], sizeof(actionLabels_[index]))) {
       clearManifest();
       return ManifestResult::Unavailable;
     }
@@ -331,27 +333,34 @@ AirPageIGrowthBridge::ManifestResult AirPageIGrowthBridge::loadManifest(const ch
 }
 
 bool AirPageIGrowthBridge::loadCachedManifest(const char* imageSha256, const uint32_t pageNumber) {
-  char state[kBindingCapacity + kDeliveryIdCapacity + kShaCapacity + 28]{};
+  char state[kBindingCapacity + kDeliveryIdCapacity + kShaCapacity + igrowth::kActionLabelCapacity * 4 + 40]{};
   const std::string manifestPath = igrowth::statePath(endpoint_, "manifest");
   if (Storage.readFileToBuffer(manifestPath.c_str(), state, sizeof(state)) == 0) return false;
-  char* binding = state;
-  char* delivery = strchr(binding, '\n');
-  if (!delivery) return false;
-  *delivery++ = '\0';
-  char* sha = strchr(delivery, '\n');
-  if (!sha) return false;
-  *sha++ = '\0';
-  char* page = strchr(sha, '\n');
-  if (!page) return false;
-  *page++ = '\0';
+  char* lines[9]{};
+  char* cursor = state;
+  for (uint8_t index = 0; index < 8; ++index) {
+    lines[index] = cursor;
+    char* newline = strchr(cursor, '\n');
+    if (!newline) return false;
+    *newline = '\0';
+    cursor = newline + 1;
+  }
+  lines[8] = cursor;
+  if (strchr(cursor, '\n') || strcmp(lines[0], kManifestCacheVersion) != 0) return false;
   char* end = nullptr;
-  const unsigned long cachedPage = strtoul(page, &end, 10);
-  if (!end || *end != '\0' || cachedPage != pageNumber || strcmp(binding, bindingRevision_) != 0 ||
-      strcmp(sha, imageSha256) != 0 || !validIdentifier(delivery, 9, kDeliveryIdCapacity - 1) ||
-      !copyBounded(deliveryId_, sizeof(deliveryId_), delivery) ||
+  const unsigned long cachedPage = strtoul(lines[4], &end, 10);
+  if (!end || *end != '\0' || cachedPage != pageNumber || strcmp(lines[1], bindingRevision_) != 0 ||
+      strcmp(lines[3], imageSha256) != 0 || !validIdentifier(lines[2], 9, kDeliveryIdCapacity - 1) ||
+      !copyBounded(deliveryId_, sizeof(deliveryId_), lines[2]) ||
       !copyBounded(imageSha256_, sizeof(imageSha256_), imageSha256)) {
     clearManifest();
     return false;
+  }
+  for (uint8_t index = 0; index < 4; ++index) {
+    if (!igrowth::copyActionLabel(lines[index + 5], actionLabels_[index], sizeof(actionLabels_[index]))) {
+      clearManifest();
+      return false;
+    }
   }
   pageNumber_ = pageNumber;
   manifestReady_ = true;
@@ -360,9 +369,10 @@ bool AirPageIGrowthBridge::loadCachedManifest(const char* imageSha256, const uin
 
 bool AirPageIGrowthBridge::saveCachedManifest() const {
   if (!manifestReady_ || !Storage.ensureDirectoryExists(endpoint_.stateDirectory.c_str())) return false;
-  char state[kBindingCapacity + kDeliveryIdCapacity + kShaCapacity + 28];
-  const int written = snprintf(state, sizeof(state), "%s\n%s\n%s\n%lu", bindingRevision_, deliveryId_, imageSha256_,
-                               static_cast<unsigned long>(pageNumber_));
+  char state[kBindingCapacity + kDeliveryIdCapacity + kShaCapacity + igrowth::kActionLabelCapacity * 4 + 40];
+  const int written = snprintf(state, sizeof(state), "%s\n%s\n%s\n%s\n%lu\n%s\n%s\n%s\n%s", kManifestCacheVersion,
+                               bindingRevision_, deliveryId_, imageSha256_, static_cast<unsigned long>(pageNumber_),
+                               actionLabels_[0], actionLabels_[1], actionLabels_[2], actionLabels_[3]);
   const std::string manifestPath = igrowth::statePath(endpoint_, "manifest");
   return written > 0 && static_cast<size_t>(written) < sizeof(state) &&
          Storage.writeFile(manifestPath.c_str(), String(state));
@@ -372,7 +382,13 @@ void AirPageIGrowthBridge::clearManifest() {
   manifestReady_ = false;
   deliveryId_[0] = '\0';
   imageSha256_[0] = '\0';
+  for (auto& label : actionLabels_) label[0] = '\0';
   pageNumber_ = 0;
+}
+
+const char* AirPageIGrowthBridge::actionLabel(const igrowth::Button button) const {
+  const uint8_t index = static_cast<uint8_t>(button);
+  return index < 4 ? actionLabels_[index] : "";
 }
 
 int AirPageIGrowthBridge::postEvent(const std::string& body) const {

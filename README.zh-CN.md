@@ -28,7 +28,7 @@
 > 中间人攻击风险；请只在可信网络中使用。原生模拟器仍通过 libcurl 的主机信任库
 > 验证证书。
 
-上游 CrossPoint 的全部能力（EPUB 2/3 渲染、多格式支持、无线传书、OPDS、OTA 等）在 CrossMux 中同样可用，详见 [English README](./README.md#what-can-crosspoint-do)。
+上游 CrossPoint 的全部能力（EPUB 2/3 渲染、多格式支持、无线传书、OPDS、OTA 等）在 CrossMux 中同样可用，详见 [English README](./README.md#what-can-crosspoint-do)。iGAgentOS X3 还会开机进入 AirPage，并把每一轮 iGrowth 模型动态生成的四个选择显示在四个逻辑按键上；按键结果回到原 iGrowth 对话，后续回复再返回同一台墨水屏。完整配置、配对和无需读卡器的无线刷机流程见 [iGAgentOS X3 使用与运维手册](./docs/igagentos-x3-operations.md)。
 
 ---
 

@@ -1271,8 +1271,12 @@ void AirPageActivity::renderPairing(const Rect& viewport) {
 
 void AirPageActivity::renderImageControls() {
   if (!igrowthBridge_.hasManifest()) return;
-  const auto labels = mappedInput.mapLabels(tr(STR_AIRPAGE_ACTION_DISMISS), tr(STR_AIRPAGE_ACTION_CONTINUE),
-                                            tr(STR_AIRPAGE_ACTION_EXPLAIN), tr(STR_AIRPAGE_ACTION_NEXT));
+  // These strings are signed delivery data, like the rendered card itself,
+  // rather than firmware-owned UI copy that belongs in the translation table.
+  const auto labels = mappedInput.mapLabels(igrowthBridge_.actionLabel(airpage::igrowth::Button::Back),
+                                            igrowthBridge_.actionLabel(airpage::igrowth::Button::Confirm),
+                                            igrowthBridge_.actionLabel(airpage::igrowth::Button::Left),
+                                            igrowthBridge_.actionLabel(airpage::igrowth::Button::Right));
   GUI.drawButtonHints(renderer, labels.btn1, labels.btn2, labels.btn3, labels.btn4);
   switch (actionFeedback_) {
     case ActionFeedback::None:
