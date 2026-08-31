@@ -27,6 +27,7 @@ class AirPageIGrowthBridge final {
   bool drainOneQueuedEvent();
   void clearManifest();
   bool hasManifest() const { return manifestReady_; }
+  const char* actionLabel(igrowth::Button button) const;
 
  private:
   static constexpr size_t kDeviceIdCapacity = 17;
@@ -60,6 +61,7 @@ class AirPageIGrowthBridge final {
   char displayCode_[kDisplayCodeCapacity]{};
   char deliveryId_[kDeliveryIdCapacity]{};
   char imageSha256_[kShaCapacity]{};
+  char actionLabels_[4][igrowth::kActionLabelCapacity]{};
   uint64_t sequence_ = 0;
   uint64_t pairingExpiresAtMs_ = 0;
   uint32_t pageNumber_ = 0;

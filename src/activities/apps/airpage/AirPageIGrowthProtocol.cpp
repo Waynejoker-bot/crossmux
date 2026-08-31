@@ -29,6 +29,17 @@ bool isLowerHex(const char* value) {
 
 const ActionContract& actionContract(const Button button) { return kActions[static_cast<uint8_t>(button)]; }
 
+bool copyActionLabel(const char* value, char* output, const size_t outputSize) {
+  if (!value || !output || outputSize == 0) return false;
+  const size_t length = strlen(value);
+  if (length == 0 || length >= outputSize || length >= kActionLabelCapacity) return false;
+  for (size_t index = 0; index < length; ++index) {
+    if (static_cast<uint8_t>(value[index]) < 0x20u) return false;
+  }
+  memcpy(output, value, length + 1);
+  return true;
+}
+
 bool parseDeliveryTrailer(const uint8_t* trailer, const size_t size, uint32_t& pageNumber) {
   pageNumber = 0;
   if (!trailer || size != kDeliveryTrailerSize || memcmp(trailer, kTrailerMagic, sizeof(kTrailerMagic)) != 0) {

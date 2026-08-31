@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create a versioned iGAgentOS X3 SD-card update package."""
+"""Create a versioned iGAgentOS X3 wireless/SD-card update package."""
 
 import argparse
 import configparser
@@ -97,16 +97,20 @@ def write_instructions(path, product_name, product_version, development_origin):
         else '本包未附带开发服务地址；如需本地联调，请在 SD 卡根目录创建 igrowth-development.txt。\n'
     )
     path.write_text(
-        f'''{product_name} X3 v{product_version} 刷机说明
+        f'''{product_name} X3 v{product_version} 刷机说明（无需读卡器）
 
 1. 设备：Xteink X3（与 X4 共用 ESP32-C3 固件）。
-2. 用于“SD 卡固件更新”的文件必须叫 firmware.bin；请把它复制到 SD 卡根目录。
-3. iGAgentOS-X3-v{product_version}.bin 与 firmware.bin 内容完全相同，只用于归档和区分版本。
-4. 设备启动页和“设置 → 关于”会显示 {product_name} / {product_version}。
-5. 刷机前可运行：shasum -a 256 -c SHA256SUMS.txt
-6. 刷机时保持电量充足，不要断电；完成首次启动后再移除 firmware.bin。
+2. 在设备打开“文件传输 → 加入网络”，让电脑和设备连接同一可信 Wi-Fi。
+3. 浏览器打开设备屏幕显示的 IP，进入文件管理，把 firmware.bin 上传到 SD 卡根目录；同名文件会覆盖。也可运行：curl -f -F "file=@firmware.bin" "http://<设备IP>/upload?path=/"
+4. 返回设备，进入“设置 → SD 卡固件更新”，选择 firmware.bin 并确认。普通设置更新也可选择本包中的 iGAgentOS-X3-v{product_version}.bin；firmware.bin 是标准文件名，也是恢复刷机约定名。
+5. iGAgentOS-X3-v{product_version}.bin 与 firmware.bin 内容完全相同，只用于归档和区分版本。
+6. 刷机前可运行：shasum -a 256 -c SHA256SUMS.txt
+7. 刷机时保持电量充足，不要断电；设备会自动重启。启动页和“设置 → 关于”应显示 {product_name} / {product_version}。
+8. 文件传输服务没有登录验证，只能在可信私有网络使用；上传完成后退出“文件传输”。
 
-{development_text}在 AirPage 设置里选择“开发”即可连接该地址；选择“线上”则使用 https://igrowth.cc。
+{development_text}开发地址必须是同一局域网可访问的 http://<私网IP>:<端口>，例如 http://192.168.1.20:2048。可用同一“文件传输”网页把 igrowth-development.txt 上传到 SD 卡根目录，无需读卡器。在 AirPage 设置里选择“开发”即可连接该地址；选择“线上”则使用 https://igrowth.cc。
+
+完整说明：https://github.com/0x1abin/crossmux/blob/main/docs/igagentos-x3-operations.md
 ''',
         encoding='utf-8',
     )

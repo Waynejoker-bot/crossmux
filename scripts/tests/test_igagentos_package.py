@@ -75,6 +75,14 @@ class IGAgentOSPackageTest(unittest.TestCase):
             self.assertIn('  iGAgentOS-X3-v0.1.0.bin\n', checksums)
             self.assertIn('  iGAgentOS-X3-v0.1.0-manifest.json\n', checksums)
 
+            instructions = (output / '刷机说明.txt').read_text()
+            self.assertIn('无需读卡器', instructions)
+            self.assertIn('文件传输 → 加入网络', instructions)
+            self.assertIn('http://<设备IP>/upload?path=/', instructions)
+            self.assertIn('设置 → SD 卡固件更新', instructions)
+            self.assertIn('igrowth-development.txt', instructions)
+            self.assertIn('http://192.168.1.20:2048', instructions)
+
     def test_rejects_firmware_without_matching_brand_and_version(self):
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)

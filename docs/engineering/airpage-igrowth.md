@@ -34,20 +34,30 @@ iGrowth appends a 55-byte non-pixel trailer to each actionable BMP:
 
 The firmware hashes the complete BMP, including this trailer, and requests the
 manifest for that exact hash. The v1 manifest must contain exactly these four
-logical-button mappings, in order:
+logical-button slots, in order. The button and action ID are the stable protocol
+contract; the signed label is frozen by iGrowth for that delivery and is shown
+verbatim in the device footer:
 
-| Logical button | Action | Device label |
+| Logical button | Action ID | Label source |
 |---|---|---|
-| Back | `dismiss` | Later |
-| Confirm | `continue` | Continue |
-| Left | `explain` | Explain |
-| Right | `next` | Next step |
+| Back | `dismiss` | Model-generated choice A |
+| Confirm | `continue` | Model-generated choice B |
+| Left | `explain` | Model-generated choice C |
+| Right | `next` | Model-generated choice D |
 
-The mappings use `MappedInputManager` logical buttons, so the user's front-key
-remapping remains authoritative. When an actionable image is displayed, a
-short Back press sends `dismiss`; holding Back for one second exits to the
-normal AirPage QR screen and consumes the release so it cannot trigger a second
-action.
+The labels are required, non-empty UTF-8 strings shorter than 49 bytes and may
+not contain control characters. They are cached with the exact delivery,
+binding revision, image hash, and page so offline rendering cannot mix choices
+from another turn. The mappings use `MappedInputManager` logical buttons, so
+the user's front-key remapping remains authoritative. When an actionable image
+is displayed, a short Back press sends slot A (`dismiss`); holding Back for one
+second exits to the normal AirPage QR screen and consumes the release so it
+cannot trigger a second action.
+
+On the server, the fixed action ID resolves the label frozen for that delivery.
+The label becomes the next user message in the original iGrowth Session; the
+Agent continues that same Session and its reply is delivered back to the same
+AirPage device. The firmware never invents or substitutes the four labels.
 
 Each event carries the delivery ID, complete-image SHA-256, page number,
 logical button, action ID, a monotonic sequence, a random event ID, and the
