@@ -2,6 +2,8 @@
 
 #include <string>
 
+#include "AirPageIGrowthService.h"
+
 namespace airpage {
 
 // Returns this device's 16-character random id, unrelated to the hardware MAC.
@@ -26,5 +28,12 @@ bool saveRealtimeMode(bool enabled);
 // custom sleep screen. Missing or invalid state defaults to OFF.
 bool loadAutoSleepWallpaper();
 bool saveAutoSleepWallpaper(bool enabled);
+
+// iGrowth service selector. Production is the safe default. The development
+// origin is read from /igrowth-development.txt on the SD card; a local build
+// may also provide AIRPAGE_IGROWTH_DEVELOPMENT_ORIGIN as a fallback.
+igrowth::ServiceEnvironment loadIGrowthServiceEnvironment();
+bool saveIGrowthServiceEnvironment(igrowth::ServiceEnvironment environment);
+std::string loadIGrowthDevelopmentOrigin();
 
 }  // namespace airpage

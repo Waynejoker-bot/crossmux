@@ -98,8 +98,10 @@ void AirPageActivity::onEnter() {
   settingsRows_[0].actionValue = 0;
   settingsRows_[1].label = tr(STR_AIRPAGE_AUTO_WALLPAPER);
   settingsRows_[1].actionValue = 1;
-  settingsRows_[2].label = tr(STR_AIRPAGE_IGROWTH_BUTTONS);
+  settingsRows_[2].label = tr(STR_AIRPAGE_IGROWTH_SERVICE);
   settingsRows_[2].actionValue = 2;
+  settingsRows_[3].label = tr(STR_AIRPAGE_IGROWTH_BUTTONS);
+  settingsRows_[3].actionValue = 3;
   airpage::AirPageImageRenderer::resetSessionFailures();
 
   switch (imageStore_.initialize(currentArchiveDateKey())) {
@@ -118,7 +120,12 @@ void AirPageActivity::onEnter() {
   airpage::AirPageWallpaper::recoverInterruptedTransaction();
 
   const std::string& deviceId = airpage::deviceId();
-  igrowthBridge_.begin(deviceId.c_str());
+  developerOrigin_ = airpage::loadIGrowthDevelopmentOrigin();
+  serviceEnvironment_ = airpage::loadIGrowthServiceEnvironment();
+  if (!igrowthBridge_.begin(deviceId.c_str(), serviceEnvironment_, developerOrigin_)) {
+    serviceEnvironment_ = airpage::igrowth::ServiceEnvironment::Production;
+    (void)igrowthBridge_.begin(deviceId.c_str(), serviceEnvironment_, developerOrigin_);
+  }
   uploadUrl_.reserve(64 + deviceId.size());
   uploadUrl_ = "https://";
   uploadUrl_ += CrossMuxEndpoints::AIRPAGE_SUBDOMAIN;
@@ -530,7 +537,10 @@ void AirPageActivity::buildTouchScreen(UiScreen& screen) {
                                           static_cast<int16_t>(content.x)});
       settingsRows_[0].value = connection_.realtime() ? tr(STR_AIRPAGE_MODE_REALTIME) : tr(STR_AIRPAGE_MODE_MANUAL);
       settingsRows_[1].value = autoSleepWallpaper_ ? tr(STR_AIRPAGE_SETTING_ON) : tr(STR_AIRPAGE_SETTING_OFF);
-      settingsRows_[2].value = igrowthBridge_.paired() ? tr(STR_AIRPAGE_IGROWTH_PAIRED) : tr(STR_AIRPAGE_IGROWTH_SETUP);
+      settingsRows_[2].value = serviceEnvironment_ == airpage::igrowth::ServiceEnvironment::Development
+                                   ? tr(STR_AIRPAGE_IGROWTH_DEVELOPMENT)
+                                   : tr(STR_AIRPAGE_IGROWTH_PRODUCTION);
+      settingsRows_[3].value = igrowthBridge_.paired() ? tr(STR_AIRPAGE_IGROWTH_PAIRED) : tr(STR_AIRPAGE_IGROWTH_SETUP);
       fui::ListProps props;
       props.items = settingsRows_;
       props.count = kSettingsRows;
@@ -695,6 +705,30 @@ void AirPageActivity::applySettingsSelection() {
         return;
       }
       autoSleepWallpaper_ = enabled;
+      requestUpdate();
+      break;
+    }
+    case SettingRow::IGrowthService: {
+      const auto previous = serviceEnvironment_;
+      const auto selected = previous == airpage::igrowth::ServiceEnvironment::Production
+                                ? airpage::igrowth::ServiceEnvironment::Development
+                                : airpage::igrowth::ServiceEnvironment::Production;
+      developerOrigin_ = airpage::loadIGrowthDevelopmentOrigin();
+      const std::string& deviceId = airpage::deviceId();
+      if (!igrowthBridge_.begin(deviceId.c_str(), selected, developerOrigin_)) {
+        notice_ = Notice::SettingsSaveFailed;
+        requestUpdate();
+        return;
+      }
+      if (!airpage::saveIGrowthServiceEnvironment(selected)) {
+        (void)igrowthBridge_.begin(deviceId.c_str(), previous, developerOrigin_);
+        notice_ = Notice::SettingsSaveFailed;
+        requestUpdate();
+        return;
+      }
+      serviceEnvironment_ = selected;
+      actionFeedback_ = ActionFeedback::None;
+      notice_ = Notice::None;
       requestUpdate();
       break;
     }

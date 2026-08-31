@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <utility>
 
 #include "AirPageIGrowthCrypto.h"
 
@@ -21,16 +22,10 @@ namespace airpage {
 
 namespace {
 
-constexpr char kApiOrigin[] = "https://igrowth.cc";
 constexpr char kPairingPath[] = "/msapi/airpage/device/pairings";
 constexpr char kClaimPath[] = "/msapi/airpage/device/pairings/claim";
 constexpr char kManifestPath[] = "/msapi/airpage/device/manifest";
 constexpr char kEventPath[] = "/msapi/airpage/device/events";
-constexpr char kStateDir[] = "/.crosspoint/airpage/igrowth";
-constexpr char kCredentialPath[] = "/.crosspoint/airpage/igrowth/credential";
-constexpr char kManifestCachePath[] = "/.crosspoint/airpage/igrowth/manifest";
-constexpr char kSequencePath[] = "/.crosspoint/airpage/igrowth/sequence";
-constexpr char kOutboxDir[] = "/.crosspoint/airpage/igrowth/outbox";
 constexpr size_t kMaxResponseBytes = 2048;
 constexpr size_t kMaxEventBytes = 768;
 constexpr size_t kMaxOutboxEntries = 8;
@@ -97,7 +92,14 @@ bool validIdentifier(const char* value, const size_t minimum, const size_t maxim
 
 }  // namespace
 
-void AirPageIGrowthBridge::begin(const char* deviceId) {
+bool AirPageIGrowthBridge::begin(const char* deviceId, const igrowth::ServiceEnvironment environment,
+                                 const std::string& developerOrigin) {
+  igrowth::ServiceEndpoint endpoint;
+  if (!igrowth::resolveServiceEndpoint(environment, developerOrigin, endpoint)) {
+    LOG_ERR("AIRIG", "Invalid iGrowth service endpoint");
+    return false;
+  }
+  endpoint_ = std::move(endpoint);
   clearManifest();
   pairingId_[0] = '\0';
   claimToken_[0] = '\0';
@@ -106,17 +108,19 @@ void AirPageIGrowthBridge::begin(const char* deviceId) {
   if (!copyBounded(deviceId_, sizeof(deviceId_), deviceId)) {
     LOG_ERR("AIRIG", "Invalid AirPage device id");
     deviceId_[0] = '\0';
-    return;
+    return false;
   }
   loadCredential();
   sequence_ = loadSequence();
+  return true;
 }
 
 bool AirPageIGrowthBridge::loadCredential() {
   bindingRevision_[0] = '\0';
   secret_[0] = '\0';
   char state[kBindingCapacity + 96]{};
-  const size_t read = Storage.readFileToBuffer(kCredentialPath, state, sizeof(state));
+  const std::string credentialPath = igrowth::statePath(endpoint_, "credential");
+  const size_t read = Storage.readFileToBuffer(credentialPath.c_str(), state, sizeof(state));
   if (read == 0) return false;
   char* separator = strchr(state, '\n');
   if (!separator) return false;
@@ -135,28 +139,32 @@ bool AirPageIGrowthBridge::loadCredential() {
 }
 
 bool AirPageIGrowthBridge::saveCredential() const {
-  if (!paired() || !Storage.ensureDirectoryExists(kStateDir)) return false;
+  if (!paired() || !Storage.ensureDirectoryExists(endpoint_.stateDirectory.c_str())) return false;
   const String obfuscated = obfuscation::obfuscateToBase64(secret_);
   if (obfuscated.isEmpty()) return false;
   char state[kBindingCapacity + 96];
   const int written = snprintf(state, sizeof(state), "%s\n%s", bindingRevision_, obfuscated.c_str());
+  const std::string credentialPath = igrowth::statePath(endpoint_, "credential");
   return written > 0 && static_cast<size_t>(written) < sizeof(state) &&
-         Storage.writeFile(kCredentialPath, String(state));
+         Storage.writeFile(credentialPath.c_str(), String(state));
 }
 
 uint64_t AirPageIGrowthBridge::loadSequence() const {
   char value[24]{};
-  if (Storage.readFileToBuffer(kSequencePath, value, sizeof(value)) == 0) return 0;
+  const std::string sequencePath = igrowth::statePath(endpoint_, "sequence");
+  if (Storage.readFileToBuffer(sequencePath.c_str(), value, sizeof(value)) == 0) return 0;
   char* end = nullptr;
   const unsigned long long sequence = strtoull(value, &end, 10);
   return end && *end == '\0' ? static_cast<uint64_t>(sequence) : 0;
 }
 
 bool AirPageIGrowthBridge::saveSequence(const uint64_t sequence) const {
-  if (!Storage.ensureDirectoryExists(kStateDir)) return false;
+  if (!Storage.ensureDirectoryExists(endpoint_.stateDirectory.c_str())) return false;
   char value[24];
   const int written = snprintf(value, sizeof(value), "%llu", static_cast<unsigned long long>(sequence));
-  return written > 0 && static_cast<size_t>(written) < sizeof(value) && Storage.writeFile(kSequencePath, String(value));
+  const std::string sequencePath = igrowth::statePath(endpoint_, "sequence");
+  return written > 0 && static_cast<size_t>(written) < sizeof(value) &&
+         Storage.writeFile(sequencePath.c_str(), String(value));
 }
 
 AirPageIGrowthBridge::PairingResult AirPageIGrowthBridge::startPairing() {
@@ -324,7 +332,8 @@ AirPageIGrowthBridge::ManifestResult AirPageIGrowthBridge::loadManifest(const ch
 
 bool AirPageIGrowthBridge::loadCachedManifest(const char* imageSha256, const uint32_t pageNumber) {
   char state[kBindingCapacity + kDeliveryIdCapacity + kShaCapacity + 28]{};
-  if (Storage.readFileToBuffer(kManifestCachePath, state, sizeof(state)) == 0) return false;
+  const std::string manifestPath = igrowth::statePath(endpoint_, "manifest");
+  if (Storage.readFileToBuffer(manifestPath.c_str(), state, sizeof(state)) == 0) return false;
   char* binding = state;
   char* delivery = strchr(binding, '\n');
   if (!delivery) return false;
@@ -350,12 +359,13 @@ bool AirPageIGrowthBridge::loadCachedManifest(const char* imageSha256, const uin
 }
 
 bool AirPageIGrowthBridge::saveCachedManifest() const {
-  if (!manifestReady_ || !Storage.ensureDirectoryExists(kStateDir)) return false;
+  if (!manifestReady_ || !Storage.ensureDirectoryExists(endpoint_.stateDirectory.c_str())) return false;
   char state[kBindingCapacity + kDeliveryIdCapacity + kShaCapacity + 28];
   const int written = snprintf(state, sizeof(state), "%s\n%s\n%s\n%lu", bindingRevision_, deliveryId_, imageSha256_,
                                static_cast<unsigned long>(pageNumber_));
+  const std::string manifestPath = igrowth::statePath(endpoint_, "manifest");
   return written > 0 && static_cast<size_t>(written) < sizeof(state) &&
-         Storage.writeFile(kManifestCachePath, String(state));
+         Storage.writeFile(manifestPath.c_str(), String(state));
 }
 
 void AirPageIGrowthBridge::clearManifest() {
@@ -413,7 +423,8 @@ bool AirPageIGrowthBridge::findOldestQueuedEvent(char* path, const size_t pathSi
   if (!path || pathSize == 0) return false;
   path[0] = '\0';
   size_t found = 0;
-  auto directory = Storage.open(kOutboxDir);
+  const std::string outboxDirectory = igrowth::statePath(endpoint_, "outbox");
+  auto directory = Storage.open(outboxDirectory.c_str());
   if (!directory || !directory.isDirectory()) {
     if (count) *count = 0;
     return false;
@@ -429,7 +440,7 @@ bool AirPageIGrowthBridge::findOldestQueuedEvent(char* path, const size_t pathSi
     if (length != 25 || strcmp(base + 20, ".json") != 0) continue;
     ++found;
     char candidate[96];
-    const int written = snprintf(candidate, sizeof(candidate), "%s/%s", kOutboxDir, base);
+    const int written = snprintf(candidate, sizeof(candidate), "%s/%s", outboxDirectory.c_str(), base);
     if (written <= 0 || static_cast<size_t>(written) >= sizeof(candidate)) continue;
     if (path[0] == '\0' || strcmp(candidate, path) < 0) snprintf(path, pathSize, "%s", candidate);
   }
@@ -438,14 +449,15 @@ bool AirPageIGrowthBridge::findOldestQueuedEvent(char* path, const size_t pathSi
 }
 
 bool AirPageIGrowthBridge::saveQueuedEvent(const uint64_t sequence, const std::string& body) const {
-  if (!Storage.ensureDirectoryExists(kOutboxDir)) return false;
+  const std::string outboxDirectory = igrowth::statePath(endpoint_, "outbox");
+  if (!Storage.ensureDirectoryExists(outboxDirectory.c_str())) return false;
   char oldest[96];
   size_t count = 0;
   findOldestQueuedEvent(oldest, sizeof(oldest), &count);
   if (count >= kMaxOutboxEntries) return false;
   char path[96];
-  const int written =
-      snprintf(path, sizeof(path), "%s/%020llu.json", kOutboxDir, static_cast<unsigned long long>(sequence));
+  const int written = snprintf(path, sizeof(path), "%s/%020llu.json", outboxDirectory.c_str(),
+                               static_cast<unsigned long long>(sequence));
   return written > 0 && static_cast<size_t>(written) < sizeof(path) && Storage.writeFile(path, String(body.c_str()));
 }
 
@@ -477,12 +489,12 @@ bool AirPageIGrowthBridge::postJson(const char* path, const std::string& body, c
   response.clear();
   if (!path || body.size() > kMaxEventBytes) return false;
   std::string url;
-  url.reserve(sizeof(kApiOrigin) + strlen(path));
-  url = kApiOrigin;
+  url.reserve(endpoint_.origin.size() + strlen(path));
+  url = endpoint_.origin;
   url += path;
   freeink::SecureHttpClient http;
   http.setTimeout(20000);
-  http.setCACert(kDigiCertGlobalRootG2);
+  if (endpoint_.tls) http.setCACert(kDigiCertGlobalRootG2);
   http.setReuse(false);
 #ifndef SIMULATOR
   http.setUserAgent("CrossMux-AirPage-iGrowth/1");

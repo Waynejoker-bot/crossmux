@@ -41,7 +41,7 @@ class AirPageActivity final : public Activity, private UiAppHost {
     WallpaperFailed,
     PairingFailed,
   };
-  enum class SettingRow : uint8_t { Mode, AutoWallpaper, IGrowthButtons, Count };
+  enum class SettingRow : uint8_t { Mode, AutoWallpaper, IGrowthService, IGrowthButtons, Count };
   enum class WallpaperResult : uint8_t { None, Saved, Failed };
   enum class ImageDisplayResult : uint8_t { None, Success, Failure };
   enum class ActionFeedback : uint8_t { None, Accepted, QueuedOffline, Failed };
@@ -130,6 +130,7 @@ class AirPageActivity final : public Activity, private UiAppHost {
   bool waitForInputRelease_ = false;
   bool imageBackLongHandled_ = false;
   bool autoSleepWallpaper_ = false;
+  airpage::igrowth::ServiceEnvironment serviceEnvironment_ = airpage::igrowth::ServiceEnvironment::Production;
   int displayedScreenWidth_ = 0;
   int displayedScreenHeight_ = 0;
   int settingsSelection_ = 0;
@@ -142,4 +143,5 @@ class AirPageActivity final : public Activity, private UiAppHost {
   std::string uploadUrl_;
   std::string downloadUrl_;
   std::string legacyDownloadUrl_;
+  std::string developerOrigin_;
 };
