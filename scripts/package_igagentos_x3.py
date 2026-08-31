@@ -110,7 +110,7 @@ def write_instructions(path, product_name, product_version, development_origin):
 
 {development_text}开发地址必须是同一局域网可访问的 http://<私网IP>:<端口>，例如 http://192.168.1.20:2048。可用同一“文件传输”网页把 igrowth-development.txt 上传到 SD 卡根目录，无需读卡器。在 AirPage 设置里选择“开发”即可连接该地址；选择“线上”则使用 https://igrowth.cc。
 
-完整说明：https://github.com/0x1abin/crossmux/blob/main/docs/igagentos-x3-operations.md
+完整说明：https://github.com/Waynejoker-bot/crossmux/blob/main/docs/igagentos-x3-operations.md
 ''',
         encoding='utf-8',
     )

@@ -82,6 +82,11 @@ class IGAgentOSPackageTest(unittest.TestCase):
             self.assertIn('设置 → SD 卡固件更新', instructions)
             self.assertIn('igrowth-development.txt', instructions)
             self.assertIn('http://192.168.1.20:2048', instructions)
+            self.assertIn(
+                'https://github.com/Waynejoker-bot/crossmux/blob/main/'
+                'docs/igagentos-x3-operations.md',
+                instructions,
+            )
 
     def test_rejects_firmware_without_matching_brand_and_version(self):
         with tempfile.TemporaryDirectory() as temp:
