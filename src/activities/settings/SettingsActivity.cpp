@@ -122,7 +122,7 @@ class AboutActivity final : public Activity {
       case AboutRow::FirmwareName:
         return tr(STR_CROSSPOINT);
       case AboutRow::FirmwareVersion:
-        return CROSSPOINT_VERSION;
+        return IGAGENTOS_VERSION;
       case AboutRow::DeviceModel:
         return deviceName ? deviceName : tr(STR_NOT_AVAILABLE);
       case AboutRow::WifiMacAddress:
