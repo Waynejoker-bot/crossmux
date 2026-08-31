@@ -6,11 +6,12 @@
 
 - 设备：Xteink X3；固件与 X4 共用 ESP32-C3/X3-X4 镜像，但本发布以 X3 为验收目标。
 - 系统：iGAgentOS X3 v0.1.2，基于 CrossMux 1.5.8。
-- 固件源码：<https://github.com/0x1abin/crossmux>
+- iGAgentOS 固件源码：<https://github.com/Waynejoker-bot/crossmux>
+- 上游 CrossMux：<https://github.com/0x1abin/crossmux>
 - iGrowth 源码：<https://github.com/igrowth-opc/igrowth>
-- 本版 Release：<https://github.com/0x1abin/crossmux/releases/tag/igagentos-x3-v0.1.2>
-- 完整安装包：<https://github.com/0x1abin/crossmux/releases/download/igagentos-x3-v0.1.2/iGAgentOS-X3-v0.1.2-20260831.zip>
-- 标准刷机文件：<https://github.com/0x1abin/crossmux/releases/download/igagentos-x3-v0.1.2/firmware.bin>
+- 本版 Release：<https://github.com/Waynejoker-bot/crossmux/releases/tag/igagentos-x3-v0.1.2>
+- 完整安装包：<https://github.com/Waynejoker-bot/crossmux/releases/download/igagentos-x3-v0.1.2/iGAgentOS-X3-v0.1.2-20260831.zip>
+- 标准刷机文件：<https://github.com/Waynejoker-bot/crossmux/releases/download/igagentos-x3-v0.1.2/firmware.bin>
 
 下载完整包后先核对 `SHA256SUMS.txt`。macOS/Linux 在包目录运行：
 
