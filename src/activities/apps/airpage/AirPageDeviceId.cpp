@@ -31,6 +31,8 @@ constexpr char kIdPath[] = "/.crosspoint/airpage_device_id";
 constexpr char kModeDir[] = "/.crosspoint/airpage";
 constexpr char kModePath[] = "/.crosspoint/airpage/mode";
 constexpr char kAutoSleepWallpaperPath[] = "/.crosspoint/airpage/auto_sleep_wallpaper";
+constexpr char kIGrowthEnvironmentPath[] = "/.crosspoint/airpage/igrowth_environment";
+constexpr char kIGrowthDevelopmentOriginPath[] = "/igrowth-development.txt";
 
 // Generate a random id with esp_random(). Mask-and-reject (nanoid style): take the
 // low 6 bits (0..63) and discard 62/63, so every accepted value is uniform over
@@ -110,6 +112,31 @@ bool saveAutoSleepWallpaper(const bool enabled) {
     return false;
   }
   return true;
+}
+
+igrowth::ServiceEnvironment loadIGrowthServiceEnvironment() {
+  char value[24]{};
+  Storage.readFileToBuffer(kIGrowthEnvironmentPath, value, sizeof(value));
+  return igrowth::parseServiceEnvironment(value);
+}
+
+bool saveIGrowthServiceEnvironment(const igrowth::ServiceEnvironment environment) {
+  Storage.ensureDirectoryExists(kModeDir);
+  if (!Storage.writeFile(kIGrowthEnvironmentPath, String(igrowth::serviceEnvironmentValue(environment)))) {
+    LOG_ERR("AIRIG", "service environment persist failed (SD?)");
+    return false;
+  }
+  return true;
+}
+
+std::string loadIGrowthDevelopmentOrigin() {
+  char value[160]{};
+  if (Storage.readFileToBuffer(kIGrowthDevelopmentOriginPath, value, sizeof(value)) != 0) return value;
+#ifdef AIRPAGE_IGROWTH_DEVELOPMENT_ORIGIN
+  return AIRPAGE_IGROWTH_DEVELOPMENT_ORIGIN;
+#else
+  return {};
+#endif
 }
 
 }  // namespace airpage

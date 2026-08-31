@@ -75,3 +75,19 @@ target_link_libraries(AirPageStartupPolicyTest PRIVATE
 )
 
 gtest_discover_tests(AirPageStartupPolicyTest)
+
+add_executable(AirPageIGrowthServiceTest
+  AirPageIGrowthServiceTest.cpp
+  ${REPO_ROOT}/src/activities/apps/airpage/AirPageIGrowthService.cpp
+)
+
+target_include_directories(AirPageIGrowthServiceTest BEFORE PRIVATE
+  ${REPO_ROOT}/src/activities/apps/airpage
+)
+
+target_link_libraries(AirPageIGrowthServiceTest PRIVATE
+  crosspoint_test_common
+  GTest::gtest_main
+)
+
+gtest_discover_tests(AirPageIGrowthServiceTest)

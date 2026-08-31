@@ -5,6 +5,7 @@
 #include <string>
 
 #include "AirPageIGrowthProtocol.h"
+#include "AirPageIGrowthService.h"
 
 namespace airpage {
 
@@ -14,7 +15,7 @@ class AirPageIGrowthBridge final {
   enum class ManifestResult : uint8_t { Ready, NotIGrowth, NotPaired, Unavailable };
   enum class ActionResult : uint8_t { Accepted, QueuedOffline, Unavailable };
 
-  void begin(const char* deviceId);
+  bool begin(const char* deviceId, igrowth::ServiceEnvironment environment, const std::string& developerOrigin);
   bool paired() const { return secret_[0] != '\0' && bindingRevision_[0] != '\0'; }
   bool pairingPending() const { return pairingId_[0] != '\0' && claimToken_[0] != '\0'; }
   const char* pairingCode() const { return displayCode_; }
@@ -63,6 +64,7 @@ class AirPageIGrowthBridge final {
   uint64_t pairingExpiresAtMs_ = 0;
   uint32_t pageNumber_ = 0;
   bool manifestReady_ = false;
+  igrowth::ServiceEndpoint endpoint_{};
 };
 
 }  // namespace airpage
